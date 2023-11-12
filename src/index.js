@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
-const { program } = require('commander');
+const { program } = require("commander");
 
 const {
   getConfig,
@@ -12,16 +12,20 @@ const {
   logItemCompletion,
   logConclusion,
   logError,
-} = require('./helpers');
+} = require("./helpers");
 const {
   requireOptional,
   mkDirPromise,
   readFilePromiseRelative,
   writeFilePromise,
-} = require('./utils');
+  toKebabCase,
+  toSnakeCase,
+  pipe,
+  replace,
+} = require("./utils");
 
 // Load our package.json, so that we can pass the version onto `commander`.
-const { version } = require('../package.json');
+const { version } = require("../package.json");
 
 // Get the default config for this component (looks for local/global overrides,
 // falls back to sensible defaults).
@@ -33,15 +37,15 @@ const prettify = buildPrettifier(config.prettierConfig);
 
 program
   .version(version)
-  .arguments('<componentName>')
+  .arguments("<componentName>")
   .option(
-    '-l, --lang <language>',
+    "-l, --lang <language>",
     'Which language to use (default: "js")',
     /^(js|ts)$/i,
     config.lang
   )
   .option(
-    '-d, --dir <pathToDirectory>',
+    "-d, --dir <pathToDirectory>",
     'Path to the "components" directory (default: "src/components")',
     config.dir
   )
@@ -51,8 +55,9 @@ const [componentName] = program.args;
 
 const options = program.opts();
 
-const fileExtension = options.lang === 'js' ? 'js' : 'tsx';
-const indexExtension = options.lang === 'js' ? 'js' : 'ts';
+const fileExtension = options.lang === "js" ? "js" : "tsx";
+const indexExtension = options.lang === "js" ? "js" : "ts";
+const cssExtension = "module.css";
 
 // Find the path to the selected template file.
 const templatePath = `./templates/${options.lang}.js`;
@@ -61,12 +66,19 @@ const templatePath = `./templates/${options.lang}.js`;
 const componentDir = `${options.dir}/${componentName}`;
 const filePath = `${componentDir}/${componentName}.${fileExtension}`;
 const indexPath = `${componentDir}/index.${indexExtension}`;
+const cssPath = `${componentDir}/${toKebabCase(componentName)}.${cssExtension}`;
 
 // Our index template is super straightforward, so we'll just inline it for now.
 const indexTemplate = prettify(`\
 export * from './${componentName}';
 export { default } from './${componentName}';
 `);
+
+const cssTemplate = `
+.${toSnakeCase(componentName)} {
+  position: relative;
+}
+`;
 
 logIntro({
   name: componentName,
@@ -99,27 +111,37 @@ if (fs.existsSync(fullPathToComponentDir)) {
 mkDirPromise(componentDir)
   .then(() => readFilePromiseRelative(templatePath))
   .then((template) => {
-    logItemCompletion('Directory created.');
+    logItemCompletion("Directory created.");
     return template;
   })
-  .then((template) =>
+  .then((template) => {
     // Replace our placeholders with real data (so far, just the component name)
-    template.replace(/COMPONENT_NAME/g, componentName)
-  )
+    // TODO: should be a compose/pipe instead.
+    const replaceComponentName = pipe(
+      replace(/COMPONENT_NAME/g, componentName),
+      replace(/snaked_component_name/g, toSnakeCase(componentName)),
+      replace(/kebabbed-component-name/g, toKebabCase(componentName))
+    );
+    return replaceComponentName(template);
+  })
   .then((template) =>
     // Format it using prettier, to ensure style consistency, and write to file.
     writeFilePromise(filePath, prettify(template))
   )
   .then((template) => {
-    logItemCompletion('Component built and saved to disk.');
+    logItemCompletion("Component built and saved to disk.");
     return template;
   })
   .then((template) =>
     // We also need the `index.js` file, which allows easy importing.
     writeFilePromise(indexPath, prettify(indexTemplate))
   )
+  .then((template) =>
+    // We also need the `index.js` file, which allows easy importing.
+    writeFilePromise(cssPath, cssTemplate)
+  )
   .then((template) => {
-    logItemCompletion('Index file built and saved to disk.');
+    logItemCompletion("Index file built and saved to disk.");
     return template;
   })
   .then((template) => {
